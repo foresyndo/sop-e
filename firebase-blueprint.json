@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with role-based access control inside the ERP",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["Super Admin", "Direktur", "Project Manager", "Admin", "Supervisor", "Staff"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email", "role"]
+    },
+    "Sop": {
+      "title": "Standard Operating Procedure",
+      "description": "Company SOP document and its metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "contentPurpose": { "type": "string" },
+        "contentScope": { "type": "string" },
+        "contentResponsibility": { "type": "string" },
+        "contentProcedure": { "type": "string" },
+        "contentChecklist": { "type": "string" },
+        "contentSupportForms": { "type": "string" },
+        "author": { "type": "string" },
+        "authorId": { "type": "string" },
+        "status": { "type": "string", "enum": ["Draft", "Reviewing", "Approved"] },
+        "isTemplate": { "type": "boolean" },
+        "revisionHistory": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "category", "status", "authorId"]
+    },
+    "Project": {
+      "title": "Construction Project",
+      "description": "Project baseline information, tracking details, and S-curve data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "client": { "type": "string" },
+        "contractValue": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "physicalProgress": { "type": "number" },
+        "financialProgress": { "type": "number" },
+        "sCurveData": { "type": "string" },
+        "documentation": { "type": "string" },
+        "estimatedCost": { "type": "number" },
+        "actualExpense": { "type": "number" },
+        "overheadCost": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "location", "contractValue", "startDate"]
+    },
+    "Employee": {
+      "title": "Employee Data",
+      "description": "Staff and field labor information, checking records, appraisal, and leave",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "division": { "type": "string" },
+        "status": { "type": "string", "enum": ["Permanent", "Contract", "Daily"] },
+        "attendance": { "type": "string" },
+        "leaves": { "type": "string" },
+        "performanceReviews": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "role", "division", "status"]
+    },
+    "Client": {
+      "title": "Corporate Client",
+      "description": "Project developer or government agency representative",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "contact": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "projectHistory": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "company", "contact"]
+    },
+    "Document": {
+      "title": "Corporate Document",
+      "description": "Stored contract, news records, invoice, or photos automatically categorized",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string", "enum": ["SOP", "Kontrak", "Berita Acara", "Invoice", "Foto Proyek"] },
+        "project": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" },
+        "fileUrl": { "type": "string" },
+        "fileType": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "uploadedBy", "uploadedAt"]
+    },
+    "Report": {
+      "title": "Periodic Report",
+      "description": "Progress audit reports or notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "project": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Individual member configuration metadata"
+    },
+    "/sop/{sopId}": {
+      "schema": "Sop",
+      "description": "Company SOP documents"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Construction projects"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Organization personnel files"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Company clients"
+    },
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "Invoices, blueprints, contracts files"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Periodic auditing reports"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "SOP Kontraktor Pro",
+  "description": "Sistem ERP & SOP lengkap untuk kontraktor, developer perumahan, konsultan teknik, dan perusahaan konstruksi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

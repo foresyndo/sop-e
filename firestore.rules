@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Auth helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId);
+    }
+
+    // SOPs collection
+    match /sop/{sopId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Employees collection
+    match /employees/{employeeId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Clients collection
+    match /clients/{clientId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Documents collection
+    match /documents/{documentId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Reports collection
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+  }
+}
