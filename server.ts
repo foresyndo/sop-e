@@ -8,7 +8,7 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -203,8 +203,8 @@ Karakteristik Jawaban Anda:
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server 'SOP Kontraktor Pro' running on network http://0.0.0.0:${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
