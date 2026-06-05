@@ -55,6 +55,8 @@
         "estimatedCost": { "type": "number" },
         "actualExpense": { "type": "number" },
         "overheadCost": { "type": "number" },
+        "changeOrders": { "type": "string" },
+        "paymentTerms": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "location", "contractValue", "startDate"]

@@ -56,6 +56,16 @@ async function startServer() {
           
           console.warn(`[AI Warning] Panggilan ke model "${currentModel}" gagal pada upaya ${attempt} (Status: ${errStatus}). Detail: ${errMessage}`);
           
+          // If model is busy (503) or out of quota (429), immediately switch to alternative models instead of waiting
+          const isOverloadedOrUnavailable = errStatus === 503 || errStatus === 429 || 
+            errMessage.includes("503") || errMessage.includes("UNAVAILABLE") || 
+            errMessage.includes("high demand") || errMessage.includes("exhausted");
+            
+          if (isOverloadedOrUnavailable) {
+            console.log(`[AI Fast Failover] Model "${currentModel}" sibuk atau tidak tersedia. Beralih ke alternatif model selanjutnya tanpa jeda.`);
+            break; // Break active attempts for this model, and move to the next candidate model
+          }
+          
           // If this is not the last attempt for current model, back off and retry
           if (attempt < maxRetriesPerModel) {
             const delayMs = attempt * 1200; // 1.2s delay for the first retry

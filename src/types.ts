@@ -70,7 +70,27 @@ export interface Project {
   estimatedCost?: number;
   actualExpense?: number;
   overheadCost?: number;
+  changeOrders?: string; // Serialized ChangeOrder[]
+  paymentTerms?: string; // Serialized PaymentTerm[]
   createdAt: string;
+}
+
+export interface ChangeOrder {
+  id: string;
+  title: string;
+  description: string;
+  amount: number; // positive for addon/addendum, negative for reduction
+  status: "Draft" | "Disetujui" | "Ditolak";
+  date: string;
+}
+
+export interface PaymentTerm {
+  id: string;
+  termName: string;
+  percentage: number; // percentage of the contract value (e.g. 20%)
+  amount: number;     // value of this term (e.g. 200,000,000)
+  status: "Belum Tagih" | "Sudah Tagih" | "Lunas";
+  dueDate: string;
 }
 
 export interface AttendanceRecord {

@@ -18,7 +18,7 @@ import {
   Shield,
   RotateCcw
 } from "lucide-react";
-import { Project, SCurvePoint, ProjectDoc, UserRole } from "../types";
+import { Project, SCurvePoint, ProjectDoc, UserRole, ChangeOrder, PaymentTerm } from "../types";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -437,6 +437,25 @@ export default function ProjectsTab({
   const [newActualExpense, setNewActualExpense] = useState<number>(0);
   const [newOverheadCost, setNewOverheadCost] = useState<number>(0);
 
+  // Change Orders & Payment Terms tracking states
+  const [isFinancialModalOpen, setIsFinancialModalOpen] = useState(false);
+  const [activeFinanceTab, setActiveFinanceTab] = useState<"change_orders" | "payment_terms">("change_orders");
+
+  // Form states for Change Orders
+  const [coId, setCoId] = useState<string | null>(null);
+  const [coTitle, setCoTitle] = useState("");
+  const [coDesc, setCoDesc] = useState("");
+  const [coAmount, setCoAmount] = useState<number>(0);
+  const [coStatus, setCoStatus] = useState<"Draft" | "Disetujui" | "Ditolak">("Draft");
+  const [coDate, setCoDate] = useState("");
+
+  // Form states for Payment Terms
+  const [ptId, setPtId] = useState<string | null>(null);
+  const [ptName, setPtName] = useState("");
+  const [ptPercentage, setPtPercentage] = useState<number>(0);
+  const [ptDueDate, setPtDueDate] = useState("");
+  const [ptStatus, setPtStatus] = useState<"Belum Tagih" | "Sudah Tagih" | "Lunas">("Belum Tagih");
+
   // Active Project object
   const activeProj = useMemo(() => {
     return projects.find(p => p.id === activeProjectId) || projects[0] || null;
@@ -729,6 +748,165 @@ export default function ProjectsTab({
         overheadCost: editOverhead
       });
       setIsEditingBudget(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveChangeOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeProj || !coTitle.trim()) return;
+
+    let currentCOs: ChangeOrder[] = [];
+    if (activeProj.changeOrders) {
+      try {
+        currentCOs = JSON.parse(activeProj.changeOrders);
+      } catch (err) {}
+    }
+
+    if (coId) {
+      currentCOs = currentCOs.map(co => co.id === coId ? {
+        ...co,
+        title: coTitle.trim(),
+        description: coDesc.trim(),
+        amount: coAmount,
+        status: coStatus,
+        date: coDate || new Date().toISOString().split("T")[0]
+      } : co);
+    } else {
+      const newCO: ChangeOrder = {
+        id: `co_${Date.now()}`,
+        title: coTitle.trim(),
+        description: coDesc.trim(),
+        amount: coAmount,
+        status: coStatus,
+        date: coDate || new Date().toISOString().split("T")[0]
+      };
+      currentCOs.push(newCO);
+    }
+
+    try {
+      await onUpdateProject(activeProj.id, {
+        changeOrders: JSON.stringify(currentCOs)
+      });
+      setCoId(null);
+      setCoTitle("");
+      setCoDesc("");
+      setCoAmount(0);
+      setCoStatus("Draft");
+      setCoDate("");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteChangeOrder = async (id: string) => {
+    if (!activeProj) return;
+
+    let currentCOs: ChangeOrder[] = [];
+    if (activeProj.changeOrders) {
+      try {
+        currentCOs = JSON.parse(activeProj.changeOrders);
+      } catch (err) {}
+    }
+
+    const nextCOs = currentCOs.filter(co => co.id !== id);
+
+    try {
+      await onUpdateProject(activeProj.id, {
+        changeOrders: JSON.stringify(nextCOs)
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSavePaymentTerm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeProj || !ptName.trim()) return;
+
+    let currentPTs: PaymentTerm[] = [];
+    if (activeProj.paymentTerms) {
+      try {
+        currentPTs = JSON.parse(activeProj.paymentTerms);
+      } catch (err) {}
+    } else {
+      const val = activeProj.contractValue;
+      currentPTs = [
+         { id: "term-1", termName: "Down Payment (Uang Muka)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+         { id: "term-2", termName: "Termin I (Progress 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+         { id: "term-3", termName: "Termin II (Progress 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+         { id: "term-4", termName: "Termin Akhir (Serah Terima)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+      ];
+    }
+
+    const changeOrders = activeProj.changeOrders ? JSON.parse(activeProj.changeOrders) : [];
+    const approvedCOTotal = changeOrders
+      .filter((co: any) => co.status === "Disetujui")
+      .reduce((sum: number, co: any) => sum + co.amount, 0);
+    const adjustedContractVal = activeProj.contractValue + approvedCOTotal;
+
+    const termAmount = Math.round(adjustedContractVal * (ptPercentage / 100));
+
+    if (ptId) {
+      currentPTs = currentPTs.map(pt => pt.id === ptId ? {
+        ...pt,
+        termName: ptName.trim(),
+        percentage: ptPercentage,
+        amount: termAmount,
+        dueDate: ptDueDate || activeProj.endDate,
+        status: ptStatus
+      } : pt);
+    } else {
+      const newPT: PaymentTerm = {
+        id: `pt_${Date.now()}`,
+        termName: ptName.trim(),
+        percentage: ptPercentage,
+        amount: termAmount,
+        dueDate: ptDueDate || activeProj.endDate,
+        status: ptStatus
+      };
+      currentPTs.push(newPT);
+    }
+
+    try {
+      await onUpdateProject(activeProj.id, {
+        paymentTerms: JSON.stringify(currentPTs)
+      });
+      setPtId(null);
+      setPtName("");
+      setPtPercentage(0);
+      setPtDueDate("");
+      setPtStatus("Belum Tagih");
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeletePaymentTerm = async (id: string) => {
+    if (!activeProj) return;
+
+    let currentPTs: PaymentTerm[] = [];
+    if (activeProj.paymentTerms) {
+      try {
+        currentPTs = JSON.parse(activeProj.paymentTerms);
+      } catch (err) {}
+    } else {
+      const val = activeProj.contractValue;
+      currentPTs = [
+         { id: "term-1", termName: "Down Payment (Uang Muka)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+         { id: "term-2", termName: "Termin I (Progress 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+         { id: "term-3", termName: "Termin II (Progress 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+         { id: "term-4", termName: "Termin Akhir (Serah Terima)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+      ];
+    }
+
+    const nextPTs = currentPTs.filter(pt => pt.id !== id);
+
+    try {
+      await onUpdateProject(activeProj.id, {
+        paymentTerms: JSON.stringify(nextPTs)
+      });
     } catch (err) {
       console.error(err);
     }
@@ -1357,93 +1535,44 @@ export default function ProjectsTab({
 
                 {/* 2.5 FINANCIAL BUDGETING SECTION */}
                 <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-5 space-y-4 shadow-3xs" id="project-financial-budgeting-section">
-                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="bg-blue-50 border border-blue-100 p-1.5 rounded-lg">
-                        <DollarSign className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                      </div>
-                      <div>
-                        <h3 className="text-xs font-black text-[#002147] font-mono uppercase tracking-wider">
-                          Penganggaran &amp; Keuangan Proyek (Financial Budgeting)
-                        </h3>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          Pantau alokasi estimasi biaya (RAP), pengeluaran aktual (Real Cost), dan overhead lapangan.
-                        </p>
-                      </div>
-                    </div>
+                  {(() => {
+                    // Extract and calculate Change Orders
+                    const changeOrders = (() => {
+                      if (!activeProj.changeOrders) return [];
+                      try { return JSON.parse(activeProj.changeOrders) as ChangeOrder[]; } catch { return []; }
+                    })();
+                    const approvedCOTotal = changeOrders
+                      .filter(co => co.status === "Disetujui")
+                      .reduce((sum, co) => sum + co.amount, 0);
+                    const netContractValue = activeProj.contractValue + approvedCOTotal;
 
-                    {canModify && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!isEditingBudget) {
-                            setEditEstCost(activeProj.estimatedCost ?? Math.round(activeProj.contractValue * 0.85));
-                            setEditActExpense(activeProj.actualExpense ?? 0);
-                            setEditOverhead(activeProj.overheadCost ?? 0);
-                          }
-                          setIsEditingBudget(!isEditingBudget);
-                        }}
-                        className="py-1 px-3 rounded bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 font-mono text-[9px] font-bold transition uppercase tracking-wider cursor-pointer"
-                      >
-                        {isEditingBudget ? "Batal" : "✏️ Atur Anggaran"}
-                      </button>
-                    )}
-                  </div>
+                    // Extract and calculate Payment Terms
+                    const paymentTerms = (() => {
+                      if (!activeProj.paymentTerms) {
+                        const val = activeProj.contractValue;
+                        return [
+                          { id: "term-1", termName: "Down Payment (Uang Muka Kerja)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+                          { id: "term-2", termName: "Termin I (Progress Fisik 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                          { id: "term-3", termName: "Termin II (Progress Fisik 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                          { id: "term-4", termName: "Termin Akhir (Serah Terima 100%)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+                        ] as PaymentTerm[];
+                      }
+                      try { return JSON.parse(activeProj.paymentTerms) as PaymentTerm[]; } catch { return []; }
+                    })();
 
-                  {isEditingBudget ? (
-                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 font-sans shadow-inner">
-                      <h4 className="text-[11px] font-black text-[#002147] font-mono uppercase tracking-wider">
-                        Form Pemutakhiran Anggaran Proyek
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Anggaran Estimasi (RAP):</label>
-                          <input
-                            type="number"
-                            value={editEstCost}
-                            onChange={(e) => setEditEstCost(Math.max(0, Number(e.target.value)))}
-                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Biaya Aktual (Real Cost):</label>
-                          <input
-                            type="number"
-                            value={editActExpense}
-                            onChange={(e) => setEditActExpense(Math.max(0, Number(e.target.value)))}
-                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Biaya Overhead:</label>
-                          <input
-                            type="number"
-                            value={editOverhead}
-                            onChange={(e) => setEditOverhead(Math.max(0, Number(e.target.value)))}
-                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
-                          />
-                        </div>
-                      </div>
+                    const totalInvoicePaid = paymentTerms
+                      .filter(pt => pt.status === "Lunas")
+                      .reduce((sum, pt) => sum + pt.amount, 0);
+                    const totalInvoiceOutstanding = paymentTerms
+                      .filter(pt => pt.status === "Sudah Tagih")
+                      .reduce((sum, pt) => sum + pt.amount, 0);
 
-                      <div className="flex gap-2 justify-end font-mono">
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingBudget(false)}
-                          className="bg-white border border-slate-200 text-slate-500 py-1 px-2.5 rounded text-[10px] font-bold cursor-pointer"
-                        >
-                          Batal
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveBudget}
-                          className="bg-[#002147] hover:bg-[#001733] text-white py-1 px-3.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer"
-                        >
-                          Simpan Anggaran
-                        </button>
-                      </div>
-                    </div>
-                  ) : (() => {
-                    const est = activeProj.estimatedCost ?? Math.round(activeProj.contractValue * 0.85);
+                    // Calculations for RAP
+                    const rawEst = activeProj.estimatedCost ?? Math.round(activeProj.contractValue * 0.85);
+                    // Approved Change Orders usually scale the project budget costs too, let's assume 85% of CO amount is added to RAP
+                    const coRapCostImpact = Math.round(approvedCOTotal * 0.85);
+                    const est = rawEst + coRapCostImpact;
+
                     const act = activeProj.actualExpense ?? 0;
                     const ovr = activeProj.overheadCost ?? 0;
                     const totalCost = act + ovr;
@@ -1464,58 +1593,205 @@ export default function ProjectsTab({
                     }
 
                     return (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 font-sans">
-                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                            <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Anggaran RAP (Estimasi)</span>
-                            <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(est)}</strong>
-                          </div>
-                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                            <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Realisasi Lapangan</span>
-                            <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(act)}</strong>
-                          </div>
-                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                            <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Biaya Overhead</span>
-                            <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(ovr)}</strong>
-                          </div>
-                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                            <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Sisa Plafon</span>
-                            <strong className={`text-xs font-mono font-bold block mt-0.5 ${sisa >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {formatIDR(sisa)}
-                            </strong>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3.5 space-y-2 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                          <div className="flex-1 space-y-1.5">
-                            <div className="flex justify-between items-center text-[10px] font-mono font-bold">
-                              <span className="text-slate-550">Utilisasi RAP Proyek (Budget Utilization)</span>
-                              <span className={isOver ? "text-red-700 font-black" : "text-slate-705 font-bold"}>
-                                {formatIDR(totalCost)} / {formatIDR(est)} ({utilization.toFixed(1)}%)
-                              </span>
+                      <>
+                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-slate-100 pb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="bg-blue-50 border border-blue-100 p-1.5 rounded-lg">
+                              <DollarSign className="w-5 h-5 text-blue-600 flex-shrink-0" />
                             </div>
-                            <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden relative">
-                              <div 
-                                className={`h-full transition-all duration-350 ${barColor}`}
-                                style={{ width: `${Math.min(100, utilization)}%` }}
-                              />
+                            <div>
+                              <h3 className="text-xs font-black text-[#002147] font-mono uppercase tracking-wider">
+                                Penganggaran &amp; Keuangan Kontrak (Financial Budgeting)
+                              </h3>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                Lacak RAP, realisasi lapangan, dampak addendum, serta penerimaan termin pembayaran klien.
+                              </p>
                             </div>
                           </div>
 
-                          <div className="flex justify-end items-center flex-shrink-0">
-                            <span className={`inline-flex items-center gap-1.5 py-1 px-3.5 rounded-full text-[9px] font-black font-mono border uppercase tracking-wider ${textColor}`}>
-                              ⚙️ {isOver ? "OFF-Limits (Over)" : "Efisien & Terkendali"}
-                            </span>
+                          <div className="flex items-center gap-2 font-mono flex-wrap">
+                            {canModify && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!isEditingBudget) {
+                                    setEditEstCost(activeProj.estimatedCost ?? Math.round(activeProj.contractValue * 0.85));
+                                    setEditActExpense(activeProj.actualExpense ?? 0);
+                                    setEditOverhead(activeProj.overheadCost ?? 0);
+                                  }
+                                  setIsEditingBudget(!isEditingBudget);
+                                }}
+                                className="py-1 px-2.5 rounded bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 text-[9px] font-bold transition uppercase tracking-wider cursor-pointer"
+                              >
+                                {isEditingBudget ? "Batal" : "⚙️ Atur RAP"}
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsFinancialModalOpen(true);
+                              }}
+                              className="py-1 px-3 rounded bg-[#002147] hover:bg-[#00142b] text-[#D4AF37] text-[9px] font-bold transition uppercase tracking-wider cursor-pointer inline-flex items-center gap-1.5 shadow-2xs border border-amber-550/20"
+                            >
+                              💼 Kelola CO &amp; Termin
+                            </button>
                           </div>
                         </div>
 
-                        {isOver && (
-                          <div className="bg-red-50/70 border border-red-200 rounded-lg p-2.5 px-3 flex items-center gap-2 text-red-800 text-[10px] font-mono leading-relaxed" id="budget-overrun-banner">
-                            <span className="text-xs">⚠️</span>
-                            <span><strong>Peringatan Defisit:</strong> Pengeluaran kumulatif dan overhead melebihi ambang batas Rencana Anggaran Pelaksanaan (RAP). Silakan tinjau rekayasa material lapangan atau ajukan adendum volume pekerjaan!</span>
+                        {/* Contract summary and payment terms summary grids */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-250/50">
+                          {/* Left: Contract and Addenda Information */}
+                          <div className="space-y-2 border-r border-slate-200 md:pr-4">
+                            <h4 className="text-[10px] font-bold text-slate-500 font-mono uppercase tracking-wider">Metrik Nilai Kontrak</h4>
+                            <div className="space-y-1 text-xs">
+                              <div className="flex justify-between py-1 border-b border-dashed border-slate-200">
+                                <span className="text-slate-500 font-sans">1. Nilai Kontrak Base (Awal):</span>
+                                <span className="font-mono font-bold text-slate-800">{formatIDR(activeProj.contractValue)}</span>
+                              </div>
+                              <div className="flex justify-between py-1 border-b border-dashed border-slate-200">
+                                <span className="text-slate-500 font-sans">2. Akumulasi Addendum (CO):</span>
+                                <span className={`font-mono font-bold ${approvedCOTotal >= 0 ? "text-green-600" : "text-rose-600"}`}>
+                                  {approvedCOTotal >= 0 ? "+" : ""}{formatIDR(approvedCOTotal)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between py-1 font-bold">
+                                <span className="text-slate-800 font-sans">3. Nilai Kontrak Akhir:</span>
+                                <span className="font-mono text-[#002147]">{formatIDR(netContractValue)}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Right: Milestone Payment details */}
+                          <div className="space-y-2 md:pl-2">
+                            <h4 className="text-[10px] font-bold text-slate-500 font-mono uppercase tracking-wider">Progress Cash-In (Termin)</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div className="bg-white p-2.5 rounded border border-slate-200 shadow-3xs">
+                                <span className="text-[8px] text-slate-400 block font-mono font-bold uppercase">Sudah Dibayar (Lunas)</span>
+                                <strong className="text-xs font-mono text-green-600 block mt-0.5">{formatIDR(totalInvoicePaid)}</strong>
+                                <span className="text-[9px] text-slate-400 font-mono">{((totalInvoicePaid / (netContractValue || 1)) * 100).toFixed(1)}% Kontrak</span>
+                              </div>
+                              <div className="bg-white p-2.5 rounded border border-slate-200 shadow-3xs">
+                                <span className="text-[8px] text-slate-400 block font-mono font-bold uppercase">Outstanding Invoice</span>
+                                <strong className="text-xs font-mono text-blue-600 block mt-0.5">{formatIDR(totalInvoiceOutstanding)}</strong>
+                                <span className="text-[9px] text-slate-400 font-mono">Belum Lunas</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {isEditingBudget ? (
+                          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4 font-sans shadow-inner">
+                            <h4 className="text-[11px] font-black text-[#002147] font-mono uppercase tracking-wider">
+                              Form Pemutakhiran Anggaran Proyek
+                            </h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Anggaran Estimasi (RAP):</label>
+                                <input
+                                  type="number"
+                                  value={editEstCost}
+                                  onChange={(e) => setEditEstCost(Math.max(0, Number(e.target.value)))}
+                                  className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Biaya Aktual (Real Cost):</label>
+                                <input
+                                  type="number"
+                                  value={editActExpense}
+                                  onChange={(e) => setEditActExpense(Math.max(0, Number(e.target.value)))}
+                                  className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] font-bold text-slate-500 font-mono uppercase">Biaya Overhead:</label>
+                                <input
+                                  type="number"
+                                  value={editOverhead}
+                                  onChange={(e) => setEditOverhead(Math.max(0, Number(e.target.value)))}
+                                  className="w-full bg-white border border-slate-200 rounded p-2 text-xs text-slate-800 focus:outline-none focus:border-[#D4AF37] font-mono"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex gap-2 justify-end font-mono">
+                              <button
+                                type="button"
+                                onClick={() => setIsEditingBudget(false)}
+                                className="bg-white border border-slate-200 text-slate-500 py-1 px-2.5 rounded text-[10px] font-bold cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveBudget}
+                                className="bg-[#002147] hover:bg-[#001733] text-white py-1 px-3.5 rounded text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                              >
+                                Simpan Anggaran
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 font-sans">
+                              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Anggaran RAP</span>
+                                  {approvedCOTotal !== 0 && (
+                                    <span className="text-[8px] bg-slate-200 text-slate-600 px-1 rounded font-mono font-bold" title={`Original Base RAP: ${formatIDR(rawEst)}`}>Adjusted</span>
+                                  )}
+                                </div>
+                                <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(est)}</strong>
+                              </div>
+                              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Realisasi Lapangan</span>
+                                <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(act)}</strong>
+                              </div>
+                              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Biaya Overhead</span>
+                                <strong className="text-xs text-slate-800 font-mono font-bold block mt-0.5">{formatIDR(ovr)}</strong>
+                              </div>
+                              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                <span className="text-[9px] text-slate-400 block font-mono uppercase font-bold">Sisa Plafon</span>
+                                <strong className={`text-xs font-mono font-bold block mt-0.5 ${sisa >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {formatIDR(sisa)}
+                                </strong>
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-3.5 space-y-2 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                              <div className="flex-1 space-y-1.5">
+                                <div className="flex justify-between items-center text-[10px] font-mono font-bold">
+                                  <span className="text-slate-550">Utilisasi RAP Proyek (Budget Utilization)</span>
+                                  <span className={isOver ? "text-red-700 font-black" : "text-slate-705 font-bold"}>
+                                    {formatIDR(totalCost)} / {formatIDR(est)} ({utilization.toFixed(1)}%)
+                                  </span>
+                                </div>
+                                <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden relative">
+                                  <div 
+                                    className={`h-full transition-all duration-350 ${barColor}`}
+                                    style={{ width: `${Math.min(100, utilization)}%` }}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end items-center flex-shrink-0">
+                                <span className={`inline-flex items-center gap-1.5 py-1 px-3.5 rounded-full text-[9px] font-black font-mono border uppercase tracking-wider ${textColor}`}>
+                                  ⚙️ {isOver ? "OFF-Limits (Over)" : "Efisien & Terkendali"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {isOver && (
+                              <div className="bg-red-50/70 border border-red-200 rounded-lg p-2.5 px-3 flex items-center gap-2 text-red-800 text-[10px] font-mono leading-relaxed" id="budget-overrun-banner">
+                                <span className="text-xs">⚠️</span>
+                                <span><strong>Peringatan Defisit:</strong> Pengeluaran kumulatif dan overhead melebihi Rencana Anggaran Pelaksanaan (RAP) yang disesuaikan. Silakan tinjau rekayasa material lapangan atau ajukan adendum volume pekerjaan tambahan!</span>
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
+                      </>
                     );
                   })()}
                 </div>
@@ -2284,6 +2560,618 @@ export default function ProjectsTab({
                 id="leaflet-map-root" 
                 className={`absolute inset-0 w-full h-full z-0 transition-opacity duration-300 \${leafletLoaded ? 'opacity-100' : 'opacity-0'}`} 
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2.6 DEDICATED FINANCIAL OVERLAY MODAL */}
+      {isFinancialModalOpen && activeProj && (
+        <div className="fixed inset-0 bg-[#001733]/60 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6 overflow-y-auto" id="financial-management-modal">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-200">
+            {/* Header */}
+            <div className="bg-[#002147] p-4 text-white flex justify-between items-center border-b border-[#D4AF37]">
+              <div>
+                <h3 className="text-xs font-black font-mono uppercase tracking-widest text-[#D4AF37]">
+                  KEUANGAN PROYEK (FINANCIAL MANAGEMENT PORTAL)
+                </h3>
+                <h4 className="text-xs font-bold font-sans mt-0.5 max-w-[500px] truncate">
+                  {activeProj.name}
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFinancialModalOpen(false);
+                  setCoId(null);
+                  setPtId(null);
+                }}
+                className="p-1 rounded-full text-slate-300 hover:text-white hover:bg-white/10 transition cursor-pointer text-sm font-bold font-mono"
+              >
+                ✕ Tutup
+              </button>
+            </div>
+
+            {/* Sub-tab selection */}
+            <div className="flex bg-slate-50 border-b border-slate-250/60 font-mono text-[10.5px]">
+              <button
+                type="button"
+                onClick={() => setActiveFinanceTab("change_orders")}
+                className={`flex-1 py-3 text-center font-bold uppercase border-b-2 transition ${
+                  activeFinanceTab === "change_orders"
+                    ? "border-[#002147] text-[#002147] bg-white text-xs"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                🛠️ Addendum Kontrak (Change Orders)
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFinanceTab("payment_terms")}
+                className={`flex-1 py-3 text-center font-bold uppercase border-b-2 transition ${
+                  activeFinanceTab === "payment_terms"
+                    ? "border-[#002147] text-[#002147] bg-white text-xs"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                📅 Termin Pembayaran (Payment Milestones)
+              </button>
+            </div>
+
+            {/* Calculations summaries live */}
+            {(() => {
+              const changeOrdersList = (() => {
+                if (!activeProj.changeOrders) return [];
+                try { return JSON.parse(activeProj.changeOrders) as ChangeOrder[]; } catch { return []; }
+              })();
+              const coTotalSum = changeOrdersList
+                .filter(c => c.status === "Disetujui")
+                .reduce((sum, cur) => sum + cur.amount, 0);
+              const totalContractVal = activeProj.contractValue + coTotalSum;
+
+              const paymentTermsList = (() => {
+                if (!activeProj.paymentTerms) {
+                  const val = activeProj.contractValue;
+                  return [
+                    { id: "term-1", termName: "Down Payment (Uang Muka Kerja)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+                    { id: "term-2", termName: "Termin I (Progress Fisik 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                    { id: "term-3", termName: "Termin II (Progress Fisik 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                    { id: "term-4", termName: "Termin Akhir (Serah Terima 100%)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+                  ] as PaymentTerm[];
+                }
+                try { return JSON.parse(activeProj.paymentTerms) as PaymentTerm[]; } catch { return []; }
+              })();
+
+              const billedInvoiceSum = paymentTermsList
+                .filter(pt => pt.status === "Sudah Tagih" || pt.status === "Lunas")
+                .reduce((sum, cur) => sum + cur.amount, 0);
+
+              const paidInvoiceSum = paymentTermsList
+                .filter(pt => pt.status === "Lunas")
+                .reduce((sum, cur) => sum + cur.amount, 0);
+
+              return (
+                <div className="bg-slate-100 p-3.5 px-5 font-mono grid grid-cols-1 sm:grid-cols-3 gap-3 border-b border-slate-205 text-slate-700 text-[10px]">
+                  <div>
+                    <span className="text-slate-400 block uppercase font-bold text-[8.5px]">NILAI KONTRAK TER-ADDENDUM</span>
+                    <strong className="text-[#002147] text-xs font-bold block mt-0.5">
+                      {formatIDR(totalContractVal)}
+                    </strong>
+                    <span className="text-[9px] text-slate-500">
+                      Nilai Awal: {formatIDR(activeProj.contractValue)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block uppercase font-bold text-[8.5px]">CASH REALIZATION (TUNTAS)</span>
+                    <strong className="text-emerald-600 text-xs font-bold block mt-0.5">
+                      {formatIDR(paidInvoiceSum)}
+                    </strong>
+                    <span className="text-[9px] text-slate-500">
+                      Prog. Inkaso: {((paidInvoiceSum / (totalContractVal || 1)) * 100).toFixed(1)}% Kontrak
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block uppercase font-bold text-[8.5px]">OUTSTANDING BILL (AKRUAL)</span>
+                    <strong className="text-blue-600 text-xs font-bold block mt-0.5">
+                      {formatIDR(billedInvoiceSum - paidInvoiceSum)}
+                    </strong>
+                    <span className="text-[9px] text-slate-500">
+                      Outstanding Tagih: {formatIDR(billedInvoiceSum - paidInvoiceSum)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Tab content bodies */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+              {activeFinanceTab === "change_orders" ? (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="change-orders-tab-content">
+                  {/* Left component: Editor view if canModify */}
+                  {canModify ? (
+                    <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                      <h4 className="text-[10.5px] font-black text-[#002147] font-mono uppercase tracking-wider">
+                        {coId ? "✏️ Perbarui Addendum" : "➕ Daftarkan Addendum Baru"}
+                      </h4>
+
+                      <form onSubmit={handleSaveChangeOrder} className="space-y-3 font-sans text-xs">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Judul Addendum / Pekerjaan Tambah:</label>
+                          <input
+                            required
+                            type="text"
+                            placeholder="E.g., Galian Tambahan Pier 4"
+                            value={coTitle}
+                            onChange={(e) => setCoTitle(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Keterangan Teknis / Scope:</label>
+                          <textarea
+                            placeholder="Tuliskan latar belakang teknis penambahan pekerjaan..."
+                            value={coDesc}
+                            onChange={(e) => setCoDesc(e.target.value)}
+                            rows={3}
+                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Nominal Dampak Biaya (IDR):</label>
+                          <input
+                            required
+                            type="number"
+                            placeholder="Dampak Biaya (Gunakan minus untuk Deductions)"
+                            value={coAmount || ""}
+                            onChange={(e) => setCoAmount(Number(e.target.value))}
+                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-mono text-slate-800"
+                          />
+                          <p className="text-[8.5px] italic text-slate-400 font-sans mt-0.5">Note: Tanda positif (+) untuk Pekerjaan Tambah, tanda negatif (-) untuk Pekerjaan Kurang Kontrak.</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Status:</label>
+                            <select
+                              value={coStatus}
+                              onChange={(e) => setCoStatus(e.target.value as any)}
+                              className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-sans"
+                            >
+                              <option value="Draft">Draft</option>
+                              <option value="Disetujui">Disetujui</option>
+                              <option value="Ditolak">Ditolak</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Tanggal Penandatanganan:</label>
+                            <input
+                              type="date"
+                              required
+                              value={coDate}
+                              onChange={(e) => setCoDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 justify-end pt-2 font-mono">
+                          {coId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCoId(null);
+                                setCoTitle("");
+                                setCoDesc("");
+                                setCoAmount(0);
+                                setCoStatus("Draft");
+                                setCoDate("");
+                              }}
+                              className="bg-white border border-slate-200 text-slate-500 py-1.5 px-3 rounded text-[10px] font-black cursor-pointer uppercase tracking-wider"
+                            >
+                              Batal
+                            </button>
+                          )}
+                          <button
+                            type="submit"
+                            className="bg-[#002147] hover:bg-[#001733] text-[#D4AF37] hover:text-white py-1.5 px-4 rounded text-[10px] font-black uppercase tracking-wider cursor-pointer"
+                          >
+                            {coId ? "Simpan Perubahan" : "Daftarkan CO"}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  ) : (
+                    <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-4 text-center py-10 font-sans text-xs text-slate-400">
+                      🚫 Peran akun Anda ({userRole}) tidak memiliki otorisasi untuk menambah atau memutifikasi Addendum/Change Orders.
+                    </div>
+                  )}
+
+                  {/* Right Component: List of Existing COs */}
+                  <div className="lg:col-span-8 space-y-3 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                        <h4 className="text-[10.5px] font-black text-[#002147] font-mono uppercase tracking-wider">
+                          Daftar Akumulasi Addendum Lapangan (Change Orders)
+                        </h4>
+                        <span className="text-[9px] font-mono font-bold bg-[#002147]/5 text-[#002147] py-0.5 px-2 rounded-full border border-slate-200">
+                          {(() => {
+                            try { return (JSON.parse(activeProj.changeOrders || "[]") as ChangeOrder[]).length; } catch { return 0; }
+                          })()} CO
+                        </span>
+                      </div>
+
+                      <div className="overflow-x-auto mt-2.5">
+                        <table className="w-full text-left font-sans text-xs border border-slate-200/60 rounded-xl overflow-hidden shadow-3xs">
+                          <thead className="bg-[#002147]/5 font-mono text-[9px] text-[#002147]">
+                            <tr className="border-b border-slate-200">
+                              <th className="p-3">Keterangan / Deskripsi CO</th>
+                              <th className="p-3 text-center">Tanggal</th>
+                              <th className="p-3 text-right">Nilai Biaya (IDR)</th>
+                              <th className="p-3 text-center">Status</th>
+                              {canModify && <th className="p-3 text-center">Aksi</th>}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {(() => {
+                              const list = (() => {
+                                if (!activeProj.changeOrders) return [];
+                                try { return JSON.parse(activeProj.changeOrders) as ChangeOrder[]; } catch { return []; }
+                              })();
+
+                              if (list.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={canModify ? 5 : 4} className="p-8 text-center text-slate-400 italic">
+                                      Tidak ada data Addendum / Change Order terdaftar di kontrak ini.
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              return list.map((co) => (
+                                <tr key={co.id} className="hover:bg-slate-50/50 transition">
+                                  <td className="p-3">
+                                    <strong className="text-[#002147] font-bold block text-[11px]">{co.title}</strong>
+                                    <p className="text-[10px] text-slate-400 italic mt-0.5 line-clamp-2 max-w-[280px]">{co.description}</p>
+                                  </td>
+                                  <td className="p-3 text-center font-mono text-[10px] text-slate-500 whitespace-nowrap">
+                                    {new Date(co.date).toLocaleDateString("id-ID")}
+                                  </td>
+                                  <td className={`p-3 text-right font-mono font-bold whitespace-nowrap ${co.amount >= 0 ? "text-green-600" : "text-rose-600"}`}>
+                                    {co.amount >= 0 ? "+" : ""}{formatIDR(co.amount)}
+                                  </td>
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    <span className={`inline-block py-0.5 px-2 rounded-full font-mono text-[8.5px] font-bold uppercase border ${
+                                      co.status === "Disetujui"
+                                        ? "bg-emerald-50 border-emerald-250 text-emerald-800"
+                                        : co.status === "Ditolak"
+                                        ? "bg-rose-50 border-rose-250 text-rose-800"
+                                        : "bg-slate-50 border-slate-250 text-slate-800"
+                                    }`}>
+                                      {co.status}
+                                    </span>
+                                  </td>
+                                  {canModify && (
+                                    <td className="p-3 text-center whitespace-nowrap">
+                                      <div className="flex gap-1.5 justify-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setCoId(co.id);
+                                            setCoTitle(co.title);
+                                            setCoDesc(co.description);
+                                            setCoAmount(co.amount);
+                                            setCoStatus(co.status);
+                                            setCoDate(co.date);
+                                          }}
+                                          className="text-xs text-blue-500 p-1 hover:bg-blue-50 rounded"
+                                          title="Sunting Addendum"
+                                        >
+                                          ✏️
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (window.confirm("Hapus addendum ini?")) {
+                                              handleDeleteChangeOrder(co.id);
+                                            }
+                                          }}
+                                          className="text-xs text-red-500 p-1 hover:bg-red-50 rounded"
+                                          title="Hapus Addendum"
+                                        >
+                                          🗑️
+                                        </button>
+                                      </div>
+                                    </td>
+                                  )}
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="bg-blue-50/50 border border-blue-200/60 p-3 rounded-lg leading-relaxed text-[10px] text-blue-800 font-sans">
+                      💡 <strong>Dampak Terintegrasi RAP:</strong> Setiap addendum yang berstatus <strong>Disetujui (Approved)</strong> akan ditambahkan secara proporsional ke dalam plavon RAP untuk proyek ini (+85% dari nilai addendum sebagai estimasi biaya rill lapangan), merubah limit bar visualisasi secara otomatis.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="payment-terms-tab-content">
+                  {/* Left component: Editor view if canModify */}
+                  {canModify ? (
+                    <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                      <h4 className="text-[10.5px] font-black text-[#002147] font-mono uppercase tracking-wider">
+                        {ptId ? "✏️ Perbarui Termin Pembayaran" : "➕ Daftarkan Termin Pembayaran"}
+                      </h4>
+
+                      <form onSubmit={handleSavePaymentTerm} className="space-y-4 font-sans text-xs">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Nama Termin Milestone:</label>
+                          <input
+                            required
+                            type="text"
+                            placeholder="E.g., Termin I (Progress Fisik 30%)"
+                            value={ptName}
+                            onChange={(e) => setPtName(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147]"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Persentase Nilai Kontrak (%):</label>
+                          <input
+                            required
+                            type="number"
+                            min={1}
+                            max={100}
+                            placeholder="Contoh: 20"
+                            value={ptPercentage || ""}
+                            onChange={(e) => setPtPercentage(Math.min(100, Math.max(1, Number(e.target.value))))}
+                            className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-mono"
+                          />
+                          <p className="text-[8.5px] text-slate-400 mt-1">
+                            {(() => {
+                              const changeOrders = activeProj.changeOrders ? JSON.parse(activeProj.changeOrders) : [];
+                              const approvedCOTotal = changeOrders
+                                .filter((co: any) => co.status === "Disetujui")
+                                .reduce((sum: number, co: any) => sum + co.amount, 0);
+                              const adjustedContractVal = activeProj.contractValue + approvedCOTotal;
+                              const valueOfTerm = Math.round(adjustedContractVal * (ptPercentage / 100));
+
+                              return (
+                                <span>Perhitungan Hasil: <strong>{formatIDR(valueOfTerm)}</strong> (Dihitung dari Nilai Akhir Kontrak)</span>
+                              );
+                            })()}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Status Termin:</label>
+                            <select
+                              value={ptStatus}
+                              onChange={(e) => setPtStatus(e.target.value as any)}
+                              className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-sans"
+                            >
+                              <option value="Belum Tagih">Belum Tagih</option>
+                              <option value="Sudah Tagih">Sudah Tagih (Pending Lunas)</option>
+                              <option value="Lunas">Lunas</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-550 font-mono uppercase block">Jatuh Tempo (Target):</label>
+                            <input
+                              type="date"
+                              required
+                              value={ptDueDate}
+                              onChange={(e) => setPtDueDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:outline-none focus:border-[#002147] font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 justify-end pt-2 font-mono">
+                          {ptId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPtId(null);
+                                setPtName("");
+                                setPtPercentage(0);
+                                setPtDueDate("");
+                                setPtStatus("Belum Tagih");
+                              }}
+                              className="bg-white border border-slate-200 text-slate-500 py-1.5 px-3 rounded text-[10px] font-black cursor-pointer uppercase tracking-wider"
+                            >
+                              Batal
+                            </button>
+                          )}
+                          <button
+                            type="submit"
+                            className="bg-[#002147] hover:bg-[#001733] text-[#D4AF37] hover:text-white py-1.5 px-4 rounded text-[10px] font-black uppercase tracking-wider cursor-pointer"
+                          >
+                            {ptId ? "Simpan Perubahan" : "Daftarkan Termin"}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  ) : (
+                    <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-4 text-center py-10 font-sans text-xs text-slate-400">
+                      🚫 Peran akun Anda ({userRole}) tidak memiliki otorisasi untuk menambah atau merubah status Termin Kontrak.
+                    </div>
+                  )}
+
+                  {/* Right Component: List of Existing PTs */}
+                  <div className="lg:col-span-8 space-y-3 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-[10.5px] font-black text-[#002147] font-mono uppercase tracking-wider">
+                            Rencana Alokasi &amp; Status Milestone Termin Kontrak
+                          </h4>
+                        </div>
+                        
+                        <div className="flex gap-2 font-mono">
+                          {canModify && !activeProj.paymentTerms && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                // Populate default items automatically to showcase data
+                                const val = activeProj.contractValue;
+                                const defaultPTs: PaymentTerm[] = [
+                                  { id: "term-1", termName: "Down Payment (Uang Muka Kerja)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+                                  { id: "term-2", termName: "Termin I (Progress Fisik 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                                  { id: "term-3", termName: "Termin II (Progress Fisik 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                                  { id: "term-4", termName: "Termin Akhir (Serah Terima 100%)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+                                ];
+                                try {
+                                  await onUpdateProject(activeProj.id, { paymentTerms: JSON.stringify(defaultPTs) });
+                                } catch (err) { console.error(err); }
+                              }}
+                              className="py-0.5 px-2 bg-amber-50 border border-amber-200 rounded text-[#002147] hover:bg-amber-100 font-mono text-[8.5px] font-black transition cursor-pointer"
+                              title="Hydrate default layout for construction"
+                            >
+                              ⚡ Reset Termin Standard
+                            </button>
+                          )}
+                          
+                          <span className="text-[9px] font-mono font-bold bg-[#002147]/5 text-[#002147] py-0.5 px-2 rounded-full border border-slate-200 inline-block">
+                            {(() => {
+                              const list = activeProj.paymentTerms ? JSON.parse(activeProj.paymentTerms) : [];
+                              return list.length || 4; // default terms fallback
+                            })()} Milestones
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto mt-2.5">
+                        <table className="w-full text-left font-sans text-xs border border-slate-200/60 rounded-xl overflow-hidden shadow-3xs">
+                          <thead className="bg-[#002147]/5 font-mono text-[9px] text-[#002147]">
+                            <tr className="border-b border-slate-200">
+                              <th className="p-3">Nama Termin / Milestone</th>
+                              <th className="p-3 text-center">Bobot Kontrak</th>
+                              <th className="p-3 text-right">Nilai Tagihan (IDR)</th>
+                              <th className="p-3 text-center">Jatuh Tempo</th>
+                              <th className="p-3 text-center">Status</th>
+                              {canModify && <th className="p-3 text-center">Aksi</th>}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {(() => {
+                              const list = (() => {
+                                if (!activeProj.paymentTerms) {
+                                  // Live representation of standard fallbacks in UI
+                                  const val = activeProj.contractValue;
+                                  return [
+                                    { id: "term-1", termName: "Down Payment (Uang Muka Kerja)", percentage: 20, amount: Math.round(val * 0.2), status: "Lunas", dueDate: activeProj.startDate },
+                                    { id: "term-2", termName: "Termin I (Progress Fisik 50%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                                    { id: "term-3", termName: "Termin II (Progress Fisik 80%)", percentage: 30, amount: Math.round(val * 0.3), status: "Belum Tagih", dueDate: activeProj.endDate },
+                                    { id: "term-4", termName: "Termin Akhir (Serah Terima 100%)", percentage: 20, amount: Math.round(val * 0.2), status: "Belum Tagih", dueDate: activeProj.endDate }
+                                  ] as PaymentTerm[];
+                                }
+                                try { return JSON.parse(activeProj.paymentTerms) as PaymentTerm[]; } catch { return []; }
+                              })();
+
+                              return list.map((pt) => {
+                                // recalculate amount based on possible active contract change orders
+                                const changeOrders = activeProj.changeOrders ? JSON.parse(activeProj.changeOrders) : [];
+                                const approvedCOTotal = changeOrders
+                                  .filter((co: any) => co.status === "Disetujui")
+                                  .reduce((sum: number, co: any) => sum + co.amount, 0);
+                                const adjustedContractVal = activeProj.contractValue + approvedCOTotal;
+                                const calculatedAmount = Math.round(adjustedContractVal * (pt.percentage / 100));
+
+                                return (
+                                  <tr key={pt.id} className="hover:bg-slate-50/50 transition">
+                                    <td className="p-3">
+                                      <strong className="text-[#002147] font-bold block text-[11px]">{pt.termName}</strong>
+                                    </td>
+                                    <td className="p-3 text-center font-mono font-bold text-slate-800 text-[10.5px]">
+                                      {pt.percentage}%
+                                    </td>
+                                    <td className="p-3 text-right font-mono font-bold text-slate-800 text-[10.5px]">
+                                      {formatIDR(calculatedAmount)}
+                                    </td>
+                                    <td className="p-3 text-center font-mono text-[10px] text-slate-500 whitespace-nowrap">
+                                      {new Date(pt.dueDate).toLocaleDateString("id-ID")}
+                                    </td>
+                                    <td className="p-3 text-center whitespace-nowrap">
+                                      <span className={`inline-block py-0.5 px-2 rounded-full font-mono text-[8.5px] font-bold uppercase border ${
+                                        pt.status === "Lunas"
+                                          ? "bg-emerald-50 border-emerald-250 text-emerald-800"
+                                          : pt.status === "Sudah Tagih"
+                                          ? "bg-blue-50 border-blue-250 text-blue-800"
+                                          : "bg-slate-50 border-slate-250 text-slate-800"
+                                      }`}>
+                                        {pt.status}
+                                      </span>
+                                    </td>
+                                    {canModify && (
+                                      <td className="p-3 text-center whitespace-nowrap">
+                                        <div className="flex gap-1.5 justify-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setPtId(pt.id);
+                                              setPtName(pt.termName);
+                                              setPtPercentage(pt.percentage);
+                                              setPtDueDate(pt.dueDate);
+                                              setPtStatus(pt.status);
+                                            }}
+                                            className="text-xs text-blue-500 p-1 hover:bg-blue-50 rounded"
+                                            title="Sunting Termin"
+                                          >
+                                            ✏️
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (window.confirm("Hapus termin pembayaran ini?")) {
+                                                handleDeletePaymentTerm(pt.id);
+                                              }
+                                            }}
+                                            className="text-xs text-red-500 p-1 hover:bg-red-50 rounded"
+                                            title="Hapus Termin"
+                                          >
+                                            🗑️
+                                          </button>
+                                        </div>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <div className="bg-amber-50/50 border border-amber-200/60 p-3 rounded-lg leading-relaxed text-[10px] text-[#002147] font-sans">
+                      💡 <strong>Aspek Sinkronisasi Progress:</strong> Total penagihan termin mengontrol kesehatan cashflow serta realisasi kas masuk yang langsung dilaporkan pada dashboard portofolio utama.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-slate-50 p-3.5 px-5 border-t border-slate-205 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFinancialModalOpen(false);
+                  setCoId(null);
+                  setPtId(null);
+                }}
+                className="py-1.5 px-5 rounded-lg bg-[#002147] hover:bg-[#001733] text-white text-xs font-bold font-mono uppercase tracking-wider transition cursor-pointer"
+              >
+                Selesai &amp; Sinkronisasi Dashboard
+              </button>
             </div>
           </div>
         </div>
